@@ -36,7 +36,7 @@ async function listarPacientesConEvaluaciones(req, res) {
     // Formatear respuesta con nivel de riesgo
     const pacientes = result.rows.map(row => {
       let nivelRiesgo = 'BAJO';
-      if (row.ultima_probabilidad >= 70) nivelRiesgo = 'ALTO';
+      if (row.ultima_probabilidad >= 64) nivelRiesgo = 'ALTO';
       else if (row.ultima_probabilidad >= 50) nivelRiesgo = 'MEDIO';
 
       return {
@@ -159,6 +159,13 @@ async function obtenerDetalleEvaluaciones(req, res) {
     });
 
     const analisis = analisisResult.rows[0] || null;
+    const ultimaProb = historial.length > 0 ? historial[0].probabilidad_parkinson : null;
+    let nivelActual = 'SIN_DATOS';
+    if (ultimaProb !== null) {
+      if (ultimaProb >= 64) nivelActual = 'ALTO';
+      else if (ultimaProb >= 50) nivelActual = 'MEDIO';
+      else nivelActual = 'BAJO';
+    }
 
     res.json({
       success: true,
@@ -175,7 +182,7 @@ async function obtenerDetalleEvaluaciones(req, res) {
           evaluaciones_parkinson: parseInt(analisis.predicciones_parkinson),
           evaluaciones_sano: parseInt(analisis.predicciones_sano),
           promedio_probabilidad: parseFloat(analisis.porcentaje_parkinson),
-          nivel_riesgo_actual: analisis.nivel_riesgo || 'SIN_DATOS',
+          nivel_riesgo_actual: nivelActual,
           recomendacion: analisis.recomendacion,
           ultima_actualizacion: analisis.updated_at
         } : null,
@@ -207,8 +214,8 @@ async function obtenerResumenEvaluaciones(req, res) {
          AVG(pm.probabilidad_parkinson) as probabilidad_promedio,
          COUNT(CASE WHEN pm.prediccion = 1 THEN 1 END) as total_parkinson,
          COUNT(CASE WHEN pm.prediccion = 0 THEN 1 END) as total_sanos,
-         COUNT(CASE WHEN pm.probabilidad_parkinson >= 70 THEN 1 END) as riesgo_alto,
-         COUNT(CASE WHEN pm.probabilidad_parkinson BETWEEN 50 AND 70 THEN 1 END) as riesgo_medio,
+         COUNT(CASE WHEN pm.probabilidad_parkinson >= 64 THEN 1 END) as riesgo_alto,
+         COUNT(CASE WHEN pm.probabilidad_parkinson >= 50 AND pm.probabilidad_parkinson < 64 THEN 1 END) as riesgo_medio,
          COUNT(CASE WHEN pm.probabilidad_parkinson < 50 THEN 1 END) as riesgo_bajo
        FROM predicciones_ml pm
        JOIN doctores_pacientes dp ON dp.paciente_id = pm.paciente_id
