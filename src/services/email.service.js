@@ -1,35 +1,96 @@
 const nodemailer = require('nodemailer');
 
-// Configurar transporter con Gmail usando las variables de entorno de AWS
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST, // smtp.gmail.com
-  port: parseInt(process.env.EMAIL_PORT) || 587,
-  secure: false, 
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false 
-  }
-});
+/**
+ * ENVÍO DE CORREOS
+ *
+ * - Si existe EMAIL_RELAY_URL (Railway): se envía por HTTPS a través de un
+ *   Google Apps Script que manda el correo desde la cuenta de Gmail.
+ *   Railway bloquea SMTP en el plan gratuito, pero HTTPS sí funciona.
+ * - Si NO existe (local): se usa Gmail por SMTP, igual que antes.
+ */
+const RELAY_URL    = (process.env.EMAIL_RELAY_URL || '').trim();
+const RELAY_SECRET = (process.env.EMAIL_RELAY_SECRET || '').trim();
+const USAR_RELAY   = RELAY_URL !== '';
 
-// Verificar conexión al iniciar
-transporter.verify((error, success) => {
-  if (error) {
-    console.error('❌ Error configurando Gmail:', error);
-  } else {
-    console.log('✅ Servidor de correo Gmail listo');
+let transporter = null;
+
+if (USAR_RELAY) {
+  console.log('✅ Correo configurado vía Google Apps Script (HTTPS)');
+} else {
+  transporter = nodemailer.createTransport({
+    host: process.env.EMAIL_HOST, // smtp.gmail.com
+    port: parseInt(process.env.EMAIL_PORT) || 587,
+    secure: false,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    tls: {
+      rejectUnauthorized: false
+    }
+  });
+
+  transporter.verify((error) => {
+    if (error) {
+      console.error('❌ Error configurando Gmail:', error);
+    } else {
+      console.log('✅ Servidor de correo Gmail listo');
+    }
+  });
+}
+
+/**
+ * Envía un correo por el medio que esté configurado.
+ * Devuelve un objeto con messageId para mantener el mismo formato de antes.
+ */
+async function enviarCorreo({ to, subject, html, text }) {
+  if (!USAR_RELAY) {
+    return transporter.sendMail({ from: process.env.EMAIL_FROM, to, subject, html, text });
   }
-});
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+
+  try {
+    const respuesta = await fetch(RELAY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        secret: RELAY_SECRET,
+        to,
+        subject,
+        html,
+        text: text || '',
+        fromName: 'NeuroTrack'
+      }),
+      redirect: 'follow',
+      signal: controller.signal
+    });
+
+    const contenido = await respuesta.text();
+    let datos;
+    try {
+      datos = JSON.parse(contenido);
+    } catch {
+      throw new Error(`Respuesta inesperada del servicio de correo (HTTP ${respuesta.status})`);
+    }
+
+    if (!datos.ok) {
+      throw new Error(`Servicio de correo: ${datos.error || 'error desconocido'}`);
+    }
+
+    return { messageId: `apps-script-${Date.now()}`, restantesHoy: datos.remaining };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 /**
  * Envía email con código de verificación
  */
 async function enviarCodigoVerificacion(correo, codigo) {
   try {
-    const msg = {
-      from: process.env.EMAIL_FROM, // NeuroTrack <manuelmendoza...>
+    const info = await enviarCorreo({
       to: correo,
       subject: 'Tu código de verificación - NeuroTrack',
       html: `
@@ -66,9 +127,8 @@ async function enviarCodigoVerificacion(correo, codigo) {
         </div>
       `,
       text: `Tu código de verificación es: ${codigo}. Expira en 15 minutos.`
-    };
-    
-    const info = await transporter.sendMail(msg);
+    });
+
     console.log('✅ Email de verificación enviado:', info.messageId);
     return info;
   } catch (error) {
@@ -82,8 +142,7 @@ async function enviarCodigoVerificacion(correo, codigo) {
  */
 async function enviarEmailActivacion(correo) {
   try {
-    const msg = {
-      from: process.env.EMAIL_FROM,
+    const info = await enviarCorreo({
       to: correo,
       subject: 'Tu cuenta NeuroTrack ha sido activada',
       html: `
@@ -117,10 +176,10 @@ async function enviarEmailActivacion(correo) {
             © 2024 Todos los derechos reservados
           </p>
         </div>
-      `
-    };
-    
-    const info = await transporter.sendMail(msg);
+      `,
+      text: 'Tu cuenta NeuroTrack ha sido activada. Ya puedes iniciar sesión.'
+    });
+
     console.log('✅ Email de activación enviado:', info.messageId);
     return info;
   } catch (error) {
