@@ -20,6 +20,7 @@ app.use('/api/consultas', require('./routes/consultas.routes'));
 app.use('/api/dashboard', require('./routes/dashboard.routes'));
 app.use('/api/citas', require('./routes/citas.routes'));
 app.use('/api/evaluaciones-ml', require('./routes/evaluaciones-ml.routes'));
+app.use('/api/mensajes', require('./routes/mensajes.routes'));
 
 // Health check
 app.get('/health', (req, res) => {
